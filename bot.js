@@ -14,8 +14,17 @@ const {
 } = require('discord.js');
 const Database = require('better-sqlite3');
 
-const configPath = path.join(__dirname, 'config.json');
-const config = require('./config.json');
+const config = {
+  token: process.env.token,
+  clientId: process.env.clientId,
+  guildId: process.env.guildId,
+  highGradeRoleIds: process.env.highGradeRoleIds
+    ? process.env.highGradeRoleIds.split(',')
+    : [],
+  botName: process.env.botName || "LSPD Urban",
+  botLogoUrl: process.env.botLogoUrl || "",
+  grades: []
+};
 
 const client = new Client({
   intents: [
