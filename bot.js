@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS rapports (
 ========================= */
 
 function saveConfig() {
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+  // Désactivé sur Railway (pas de config.json)
 }
 
 function getOrCreatePerson(firstName, lastName, phone = '') {
