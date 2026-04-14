@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const {
   Client,
   GatewayIntentBits,
@@ -12,18 +10,25 @@ const {
   TextInputStyle,
   ActionRowBuilder
 } = require('discord.js');
-const Database = require('better-sqlite3');
 
 const config = {
   token: process.env.token,
   clientId: process.env.clientId,
   guildId: process.env.guildId,
   highGradeRoleIds: process.env.highGradeRoleIds
-    ? process.env.highGradeRoleIds.split(',')
+    ? process.env.highGradeRoleIds.split(',').map(id => id.trim()).filter(Boolean)
     : [],
-  botName: process.env.botName || "LSPD Urban",
-  botLogoUrl: process.env.botLogoUrl || "",
-  grades: []
+  botName: process.env.botName || 'LSPD Urban',
+  botLogoUrl: process.env.botLogoUrl || '',
+  effectifChannelId: process.env.effectifChannelId || '',
+  effectifMessageId: process.env.effectifMessageId || '',
+  grades: (() => {
+    try {
+      return process.env.grades ? JSON.parse(process.env.grades) : [];
+    } catch {
+      return [];
+    }
+  })()
 };
 
 const client = new Client({
@@ -33,37 +38,12 @@ const client = new Client({
   ]
 });
 
-const db = new Database('lspd_mdt.sqlite');
+// Stockage en mémoire
+const serviceSessions = new Map();
 
 /* =========================
    HELPERS
 ========================= */
-
-function saveConfig() {
-  // Désactivé sur Railway (pas de config.json)
-}
-
-function getOrCreatePerson(firstName, lastName, phone = '') {
-  const existing = db
-    .prepare(`SELECT * FROM persons WHERE first_name = ? AND last_name = ?`)
-    .get(firstName, lastName);
-
-  if (existing) {
-    if (phone && existing.phone !== phone) {
-      db.prepare(`UPDATE persons SET phone = ? WHERE id = ?`).run(phone, existing.id);
-      return { ...existing, phone };
-    }
-    return existing;
-  }
-
-  const insert = db.prepare(
-    `INSERT INTO persons (first_name, last_name, phone) VALUES (?, ?, ?)`
-  );
-
-  const info = insert.run(firstName, lastName, phone || 'Non renseigné');
-
-  return db.prepare(`SELECT * FROM persons WHERE id = ?`).get(info.lastInsertRowid);
-}
 
 function formatDuration(ms) {
   const totalSeconds = Math.floor(ms / 1000);
@@ -263,40 +243,12 @@ const commands = [
     .setDescription("Ouvrir le formulaire de rapport d'intervention"),
 
   new SlashCommandBuilder()
-    .setName('mdt_recherche')
-    .setDescription('Rechercher une personne dans le MDT')
-    .addStringOption(option =>
-      option.setName('nom')
-        .setDescription('Nom')
-        .setRequired(true))
-    .addStringOption(option =>
-      option.setName('prenom')
-        .setDescription('Prénom')
-        .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('mdt_casier')
-    .setDescription('Voir le casier complet d’une personne')
-    .addStringOption(option =>
-      option.setName('nom')
-        .setDescription('Nom')
-        .setRequired(true))
-    .addStringOption(option =>
-      option.setName('prenom')
-        .setDescription('Prénom')
-        .setRequired(true)),
-
-  new SlashCommandBuilder()
-    .setName('mdt_unites')
-    .setDescription('Voir les unités en service'),
-
-  new SlashCommandBuilder()
     .setName('effectif')
     .setDescription("Voir l'effectif LSPD par grade"),
 
   new SlashCommandBuilder()
     .setName('effectif_panel')
-    .setDescription("Créer ou remplacer le panneau auto d'effectif"),
+    .setDescription("Voir l’ID du salon actuel pour le panneau d'effectif"),
 
   new SlashCommandBuilder()
     .setName('paye')
@@ -358,20 +310,17 @@ client.on('interactionCreate', async interaction => {
     const userId = interaction.user.id;
 
     if (interaction.commandName === 'prise_service') {
-      const existing = db
-        .prepare(`SELECT * FROM service_sessions WHERE user_id = ?`)
-        .get(userId);
-
-      if (existing) {
+      if (serviceSessions.has(userId)) {
         return interaction.reply({
           content: '❌ Tu es déjà en service.',
           ephemeral: true
         });
       }
 
-      db.prepare(
-        `INSERT INTO service_sessions (user_id, username, started_at) VALUES (?, ?, ?)`
-      ).run(userId, interaction.user.tag, Date.now());
+      serviceSessions.set(userId, {
+        username: interaction.user.tag,
+        startedAt: Date.now()
+      });
 
       const embed = applyBranding(
         new EmbedBuilder()
@@ -397,9 +346,7 @@ client.on('interactionCreate', async interaction => {
     }
 
     if (interaction.commandName === 'fin_service') {
-      const session = db
-        .prepare(`SELECT * FROM service_sessions WHERE user_id = ?`)
-        .get(userId);
+      const session = serviceSessions.get(userId);
 
       if (!session) {
         return interaction.reply({
@@ -408,8 +355,8 @@ client.on('interactionCreate', async interaction => {
         });
       }
 
-      const duration = Date.now() - session.started_at;
-      db.prepare(`DELETE FROM service_sessions WHERE user_id = ?`).run(userId);
+      const duration = Date.now() - session.startedAt;
+      serviceSessions.delete(userId);
 
       const embed = applyBranding(
         new EmbedBuilder()
@@ -434,19 +381,13 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({ embeds: [embed] });
     }
 
-    if (interaction.commandName === 'heure_service' || interaction.commandName === 'mdt_unites') {
-      const sessions = db
-        .prepare(`SELECT * FROM service_sessions ORDER BY started_at ASC`)
-        .all();
+    if (interaction.commandName === 'heure_service') {
+      const sessions = Array.from(serviceSessions.entries());
 
       if (sessions.length === 0) {
         const embed = applyBranding(
           new EmbedBuilder()
-            .setTitle(
-              interaction.commandName === 'mdt_unites'
-                ? '👮 Unités en service'
-                : '⏱️ Temps de service'
-            )
+            .setTitle('⏱️ Temps de service')
             .setDescription(
               `${header('SUIVI DES AGENTS')}\nAucun agent en service actuellement.`
             )
@@ -457,18 +398,14 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ embeds: [embed] });
       }
 
-      const lines = sessions.map(session => {
-        const duration = formatDuration(Date.now() - session.started_at);
-        return `👤 <@${session.user_id}>\n⏱️ Temps : **${duration}**\n━━━━━━━━━━━━━━━━━━`;
+      const lines = sessions.map(([id, session]) => {
+        const duration = formatDuration(Date.now() - session.startedAt);
+        return `👤 <@${id}>\n⏱️ Temps : **${duration}**\n━━━━━━━━━━━━━━━━━━`;
       });
 
       const embed = applyBranding(
         new EmbedBuilder()
-          .setTitle(
-            interaction.commandName === 'mdt_unites'
-              ? '👮 Unités en service'
-              : '⏱️ Temps de service'
-          )
+          .setTitle('⏱️ Temps de service')
           .setDescription(
             `${header('SUIVI DES AGENTS')}\n${lines.join('\n')}`
           )
@@ -482,7 +419,7 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'reset_heure') {
       if (!checkHighGrade(interaction)) return;
 
-      db.prepare(`DELETE FROM service_sessions`).run();
+      serviceSessions.clear();
 
       const embed = applyBranding(
         new EmbedBuilder()
@@ -500,13 +437,11 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'service') {
       if (!checkHighGrade(interaction)) return;
 
-      const sessions = db
-        .prepare(`SELECT * FROM service_sessions ORDER BY started_at ASC`)
-        .all();
+      const sessions = Array.from(serviceSessions.entries());
 
-      const lines = sessions.map(session => {
-        const duration = formatDuration(Date.now() - session.started_at);
-        return `• <@${session.user_id}> — ${duration}`;
+      const lines = sessions.map(([id, session]) => {
+        const duration = formatDuration(Date.now() - session.startedAt);
+        return `• <@${id}> — ${duration}`;
       });
 
       const embed = applyBranding(
@@ -608,95 +543,10 @@ client.on('interactionCreate', async interaction => {
       return interaction.showModal(modal);
     }
 
-    if (interaction.commandName === 'mdt_recherche') {
-      const nom = interaction.options.getString('nom');
-      const prenom = interaction.options.getString('prenom');
-
-      const person = db
-        .prepare(`SELECT * FROM persons WHERE first_name = ? AND last_name = ?`)
-        .get(prenom, nom);
-
-      if (!person) {
-        return interaction.reply({
-          content: '❌ Aucune fiche trouvée pour cette personne.',
-          ephemeral: true
-        });
-      }
-
-      const casiers = db
-        .prepare(`SELECT * FROM casiers WHERE person_id = ? ORDER BY created_at DESC`)
-        .all(person.id);
-
-      const embed = applyBranding(
-        new EmbedBuilder()
-          .setColor(0xf5e6c8)
-          .setTitle('🖥️ DOSSIER MDT')
-          .setDescription(
-            [
-              header('FICHE INDIVIDUELLE'),
-              '```yaml',
-              'Base : LSPD MDT',
-              'Statut : Consultable',
-              '```'
-            ].join('\n')
-          )
-          .addFields(
-            { name: '🧾 Identité', value: `**${person.last_name} ${person.first_name}**`, inline: false },
-            { name: '📞 Téléphone', value: `\`${person.phone || 'Non renseigné'}\``, inline: true },
-            { name: '📁 Casiers', value: `${casiers.length}`, inline: true }
-          )
-          .setTimestamp()
-      );
-
-      return interaction.reply({ embeds: [embed] });
-    }
-
-    if (interaction.commandName === 'mdt_casier') {
-      const nom = interaction.options.getString('nom');
-      const prenom = interaction.options.getString('prenom');
-
-      const person = db
-        .prepare(`SELECT * FROM persons WHERE first_name = ? AND last_name = ?`)
-        .get(prenom, nom);
-
-      if (!person) {
-        return interaction.reply({
-          content: '❌ Aucun dossier trouvé.',
-          ephemeral: true
-        });
-      }
-
-      const rows = db
-        .prepare(`SELECT * FROM casiers WHERE person_id = ? ORDER BY created_at DESC`)
-        .all(person.id);
-
-      const casierText = rows.length
-        ? rows.map((row, index) => {
-            return [
-              `**#${index + 1}** • ${row.delits}`,
-              `Peine : ${row.peine}`,
-              `Rédigé par : ${row.agent_name} • <t:${Math.floor(row.created_at / 1000)}:d>`
-            ].join('\n');
-          }).join('\n\n')
-        : 'Aucun casier enregistré.';
-
-      const embed = applyBranding(
-        new EmbedBuilder()
-          .setColor(0xf5e6c8)
-          .setTitle('📁 CASIER COMPLET')
-          .setDescription(
-            `${header('HISTORIQUE JUDICIAIRE')}\n${casierText}`
-          )
-          .setTimestamp()
-      );
-
-      return interaction.reply({ embeds: [embed] });
-    }
-
     if (interaction.commandName === 'effectif') {
       if (!config.grades || !Array.isArray(config.grades) || config.grades.length === 0) {
         return interaction.reply({
-          content: '❌ Aucun grade n’a été configuré dans le config.json.',
+          content: '❌ Aucun grade n’a été configuré dans les variables Railway.',
           ephemeral: true
         });
       }
@@ -708,22 +558,8 @@ client.on('interactionCreate', async interaction => {
     if (interaction.commandName === 'effectif_panel') {
       if (!checkHighGrade(interaction)) return;
 
-      if (!config.grades || !Array.isArray(config.grades) || config.grades.length === 0) {
-        return interaction.reply({
-          content: '❌ Aucun grade n’a été configuré dans le config.json.',
-          ephemeral: true
-        });
-      }
-
-      const embed = await buildEffectifEmbed(interaction.guild);
-      const sentMessage = await interaction.channel.send({ embeds: [embed] });
-
-      config.effectifChannelId = interaction.channelId;
-      config.effectifMessageId = sentMessage.id;
-      saveConfig();
-
       return interaction.reply({
-        content: '✅ Panneau d’effectif créé et synchronisation automatique activée.',
+        content: `📝 Utilise ce salon pour le panneau automatique.\nChannel ID: \`${interaction.channelId}\`\nAjoute cette valeur dans Railway avec \`effectifChannelId\`.\nPour \`effectifMessageId\`, envoie d’abord un message embed manuellement puis copie son ID, ou dis-moi si tu veux une version avec vrai stockage.`,
         ephemeral: true
       });
     }
@@ -776,12 +612,6 @@ client.on('interactionCreate', async interaction => {
       const delits = interaction.fields.getTextInputValue('delits');
       const peine = interaction.fields.getTextInputValue('peine');
 
-      const person = getOrCreatePerson(prenom, nom, telephone);
-
-      db.prepare(
-        `INSERT INTO casiers (person_id, delits, peine, agent_name, created_at) VALUES (?, ?, ?, ?, ?)`
-      ).run(person.id, delits, peine, interaction.user.tag, Date.now());
-
       const embed = applyBranding(
         new EmbedBuilder()
           .setColor(0xf5e6c8)
@@ -813,10 +643,6 @@ client.on('interactionCreate', async interaction => {
       const matricule = interaction.fields.getTextInputValue('matricule');
       const nomAgent = interaction.fields.getTextInputValue('nom_agent');
       const rapportIntervention = interaction.fields.getTextInputValue('rapport_intervention');
-
-      db.prepare(
-        `INSERT INTO rapports (matricule, agent_name, contenu, created_at) VALUES (?, ?, ?, ?)`
-      ).run(matricule, nomAgent, rapportIntervention, Date.now());
 
       const embed = applyBranding(
         new EmbedBuilder()
