@@ -1,0 +1,9 @@
+{
+  "name": "lspd-bot",
+  "version": "1.0.0",
+  "main": "bot.js",
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "discord.js": "^14.26.3"
+  }
+}
