@@ -19,26 +19,13 @@ const config = {
     ? process.env.highGradeRoleIds.split(',').map(id => id.trim()).filter(Boolean)
     : [],
   botName: process.env.botName || 'LSPD Urban',
-  botLogoUrl: process.env.botLogoUrl || '',
-  effectifChannelId: process.env.effectifChannelId || '',
-  effectifMessageId: process.env.effectifMessageId || '',
-  grades: (() => {
-    try {
-      return process.env.grades ? JSON.parse(process.env.grades) : [];
-    } catch {
-      return [];
-    }
-  })()
+  botLogoUrl: process.env.botLogoUrl || ''
 };
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers
-  ]
+  intents: [GatewayIntentBits.Guilds]
 });
 
-// Stockage en mémoire
 const serviceSessions = new Map();
 
 /* =========================
@@ -123,92 +110,6 @@ function checkHighGrade(interaction) {
   return true;
 }
 
-function getMemberGrade(member) {
-  if (!config.grades || !Array.isArray(config.grades)) return null;
-
-  for (const grade of config.grades) {
-    if (member.roles.cache.has(grade.roleId)) {
-      return grade;
-    }
-  }
-
-  return null;
-}
-
-function buildEffectifLines(membersByGrade) {
-  const lines = [];
-
-  for (const grade of config.grades || []) {
-    const members = membersByGrade.get(grade.name) || [];
-    if (members.length === 0) continue;
-
-    lines.push(`**${grade.name}**`);
-    lines.push(...members);
-    lines.push('━━━━━━━━━━━━━━━━━━');
-  }
-
-  return lines;
-}
-
-async function buildEffectifEmbed(guild) {
-  await guild.members.fetch();
-
-  const membersByGrade = new Map();
-  for (const grade of config.grades || []) {
-    membersByGrade.set(grade.name, []);
-  }
-
-  const guildMembers = guild.members.cache.filter(member => !member.user.bot);
-
-  for (const member of guildMembers.values()) {
-    const grade = getMemberGrade(member);
-    if (!grade) continue;
-
-    membersByGrade.get(grade.name).push(`• ${member} — <@&${grade.roleId}>`);
-  }
-
-  const lines = buildEffectifLines(membersByGrade);
-
-  return applyBranding(
-    new EmbedBuilder()
-      .setColor(0x2563eb)
-      .setTitle('👮 Effectif LSPD')
-      .setDescription(
-        lines.length > 0
-          ? [
-              header('LISTE DU PERSONNEL'),
-              '```yaml',
-              'Synchronisé avec les rôles Discord',
-              '```',
-              lines.join('\n')
-            ].join('\n')
-          : [
-              header('LISTE DU PERSONNEL'),
-              'Aucun membre avec un grade LSPD n’a été trouvé.'
-            ].join('\n')
-      )
-      .setTimestamp()
-  );
-}
-
-async function updateEffectifPanel() {
-  try {
-    if (!config.effectifChannelId || !config.effectifMessageId) return;
-
-    const guild = await client.guilds.fetch(config.guildId);
-    const channel = await guild.channels.fetch(config.effectifChannelId);
-    if (!channel || !channel.isTextBased()) return;
-
-    const message = await channel.messages.fetch(config.effectifMessageId);
-    if (!message) return;
-
-    const embed = await buildEffectifEmbed(guild);
-    await message.edit({ embeds: [embed] });
-  } catch (error) {
-    console.error('❌ Erreur mise à jour panneau effectif :', error.message);
-  }
-}
-
 /* =========================
    COMMANDES SLASH
 ========================= */
@@ -241,14 +142,6 @@ const commands = [
   new SlashCommandBuilder()
     .setName('rapport')
     .setDescription("Ouvrir le formulaire de rapport d'intervention"),
-
-  new SlashCommandBuilder()
-    .setName('effectif')
-    .setDescription("Voir l'effectif LSPD par grade"),
-
-  new SlashCommandBuilder()
-    .setName('effectif_panel')
-    .setDescription("Voir l’ID du salon actuel pour le panneau d'effectif"),
 
   new SlashCommandBuilder()
     .setName('paye')
@@ -295,10 +188,6 @@ const rest = new REST({ version: '10' }).setToken(config.token);
 
 client.on('clientReady', async () => {
   console.log(`✅ Connecté en tant que ${client.user.tag}`);
-
-  setInterval(async () => {
-    await updateEffectifPanel();
-  }, 60_000);
 });
 
 /* =========================
@@ -541,27 +430,6 @@ client.on('interactionCreate', async interaction => {
       );
 
       return interaction.showModal(modal);
-    }
-
-    if (interaction.commandName === 'effectif') {
-      if (!config.grades || !Array.isArray(config.grades) || config.grades.length === 0) {
-        return interaction.reply({
-          content: '❌ Aucun grade n’a été configuré dans les variables Railway.',
-          ephemeral: true
-        });
-      }
-
-      const embed = await buildEffectifEmbed(interaction.guild);
-      return interaction.reply({ embeds: [embed] });
-    }
-
-    if (interaction.commandName === 'effectif_panel') {
-      if (!checkHighGrade(interaction)) return;
-
-      return interaction.reply({
-        content: `📝 Utilise ce salon pour le panneau automatique.\nChannel ID: \`${interaction.channelId}\`\nAjoute cette valeur dans Railway avec \`effectifChannelId\`.\nPour \`effectifMessageId\`, envoie d’abord un message embed manuellement puis copie son ID, ou dis-moi si tu veux une version avec vrai stockage.`,
-        ephemeral: true
-      });
     }
 
     if (interaction.commandName === 'paye') {
