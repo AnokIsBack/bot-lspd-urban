@@ -36,44 +36,6 @@ const client = new Client({
 const db = new Database('lspd_mdt.sqlite');
 
 /* =========================
-   BASE DE DONNÉES SQLITE
-========================= */
-
-db.exec(`
-CREATE TABLE IF NOT EXISTS service_sessions (
-  user_id TEXT PRIMARY KEY,
-  username TEXT NOT NULL,
-  started_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS persons (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  first_name TEXT NOT NULL,
-  last_name TEXT NOT NULL,
-  phone TEXT,
-  UNIQUE(first_name, last_name)
-);
-
-CREATE TABLE IF NOT EXISTS casiers (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  person_id INTEGER NOT NULL,
-  delits TEXT NOT NULL,
-  peine TEXT NOT NULL,
-  agent_name TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY(person_id) REFERENCES persons(id)
-);
-
-CREATE TABLE IF NOT EXISTS rapports (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  matricule TEXT NOT NULL,
-  agent_name TEXT NOT NULL,
-  contenu TEXT NOT NULL,
-  created_at INTEGER NOT NULL
-);
-`);
-
-/* =========================
    HELPERS
 ========================= */
 
