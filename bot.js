@@ -14,7 +14,6 @@ const {
 const config = {
   token: process.env.token,
   clientId: process.env.clientId,
-  guildId: process.env.guildId,
   highGradeRoleIds: process.env.highGradeRoleIds
     ? process.env.highGradeRoleIds.split(',').map(id => id.trim()).filter(Boolean)
     : [],
@@ -59,19 +58,19 @@ function applyBranding(embed) {
 
   if (logo) {
     embed.setAuthor({
-      name: config.botName || 'LSPD • Los Santos Police Department',
+      name: config.botName || 'LSPD Urban',
       iconURL: logo
     });
 
     embed.setFooter({
-      text: config.botName || 'LSPD Bot',
+      text: config.botName || 'LSPD Urban',
       iconURL: logo
     });
 
     embed.setThumbnail(logo);
   } else {
     embed.setFooter({
-      text: config.botName || 'LSPD Bot'
+      text: config.botName || 'LSPD Urban'
     });
   }
 
@@ -172,11 +171,11 @@ const rest = new REST({ version: '10' }).setToken(config.token);
 
 (async () => {
   try {
-   await rest.put(
-  Routes.applicationCommands(config.clientId)
-  { body: commands }
-);
-    console.log('✅ Commandes installées');
+    await rest.put(
+      Routes.applicationCommands(config.clientId),
+      { body: commands }
+    );
+    console.log('✅ Commandes globales installées');
   } catch (error) {
     console.error('❌ Erreur installation commandes :', error);
   }
