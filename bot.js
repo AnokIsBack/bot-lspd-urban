@@ -172,10 +172,10 @@ const rest = new REST({ version: '10' }).setToken(config.token);
 
 (async () => {
   try {
-    await rest.put(
-     Routes.applicationCommands(config.clientId)
-      { body: commands }
-    );
+   await rest.put(
+  Routes.applicationCommands(config.clientId)
+  { body: commands }
+);
     console.log('✅ Commandes installées');
   } catch (error) {
     console.error('❌ Erreur installation commandes :', error);
